@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import '../models/ocr_result.dart';
 import '../utils/helpers.dart';
 
-class ResultScreen extends StatelessWidget {
+class ResultScreen extends StatefulWidget {
   final String imagePath;
   final OcrResult ocrResult;
   final String editedText;
@@ -23,26 +23,59 @@ class ResultScreen extends StatelessWidget {
   });
 
   @override
+  State<ResultScreen> createState() => _ResultScreenState();
+}
+
+class _ResultScreenState extends State<ResultScreen> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.editedText);
+  }
+
+  @override
+  void didUpdateWidget(ResultScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 只有当文本真正改变时才更新控制器
+    if (oldWidget.editedText != widget.editedText && 
+        _controller.text != widget.editedText) {
+      // 保存当前光标位置
+      final selection = _controller.selection;
+      _controller.text = widget.editedText;
+      // 恢复光标位置
+      _controller.selection = selection;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         Expanded(
           flex: 2,
-          child: _ImagePreview(imagePath: imagePath),
+          child: _ImagePreview(imagePath: widget.imagePath),
         ),
         const Divider(height: 1),
         Expanded(
           flex: 3,
           child: _ResultEditor(
-            ocrResult: ocrResult,
-            editedText: editedText,
-            onTextChanged: onTextChanged,
+            ocrResult: widget.ocrResult,
+            controller: _controller,
+            onTextChanged: widget.onTextChanged,
           ),
         ),
         _ActionButtons(
-          onSave: onSave,
-          onRetake: onRetake,
-          onCopy: () => Helpers.copyToClipboard(context, editedText),
+          onSave: widget.onSave,
+          onRetake: widget.onRetake,
+          onCopy: () => Helpers.copyToClipboard(context, _controller.text),
         ),
       ],
     );
@@ -87,12 +120,12 @@ class _ImagePreview extends StatelessWidget {
 
 class _ResultEditor extends StatelessWidget {
   final OcrResult ocrResult;
-  final String editedText;
+  final TextEditingController controller;
   final ValueChanged<String> onTextChanged;
 
   const _ResultEditor({
     required this.ocrResult,
-    required this.editedText,
+    required this.controller,
     required this.onTextChanged,
   });
 
@@ -122,7 +155,7 @@ class _ResultEditor extends StatelessWidget {
           const SizedBox(height: 8),
           Expanded(
             child: TextField(
-              controller: TextEditingController(text: editedText),
+              controller: controller,
               maxLines: null,
               expands: true,
               textAlignVertical: TextAlignVertical.top,

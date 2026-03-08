@@ -20,6 +20,12 @@ class ImageService {
     if (image == null) return null;
     
     final File savedFile = await _saveImageToAppDir(File(image.path));
+    // 删除临时文件
+    try {
+      await File(image.path).delete();
+    } catch (e) {
+      debugPrint('Failed to delete temp file: $e');
+    }
     return savedFile;
   }
 
@@ -88,7 +94,33 @@ class ImageService {
     }
   }
 
-  Future<File?> compressImage(File sourceFile, {int quality = 70}) async {
-    return sourceFile;
+  /// 清理旧的图片文件，只保留最近 N 张
+  Future<void> cleanupOldImages({int keepCount = 50}) async {
+    try {
+      final Directory appDir = await getApplicationDocumentsDirectory();
+      final Directory imageDir = Directory('${appDir.path}/ocr_images');
+      
+      if (!await imageDir.exists()) return;
+      
+      final files = await imageDir
+          .list()
+          .where((entity) => entity is File)
+          .map((entity) => entity as File)
+          .toList();
+      
+      if (files.length <= keepCount) return;
+      
+      // 按修改时间排序，删除最旧的
+      files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+      
+      final toDelete = files.length - keepCount;
+      for (var i = 0; i < toDelete; i++) {
+        await files[i].delete();
+      }
+      
+      debugPrint('Cleaned up $toDelete old images');
+    } catch (e) {
+      debugPrint('Failed to cleanup images: $e');
+    }
   }
 }

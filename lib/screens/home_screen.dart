@@ -70,16 +70,7 @@ class _CameraPage extends StatelessWidget {
       body: Consumer<OcrProvider>(
         builder: (context, provider, child) {
           if (provider.status == OcrStatus.loading) {
-            return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('正在识别中...'),
-                ],
-              ),
-            );
+            return _buildLoadingView(context, provider);
           }
 
           if (provider.hasResult && provider.currentImagePath != null) {
@@ -104,6 +95,60 @@ class _CameraPage extends StatelessWidget {
           return _buildInitialView(context, provider);
         },
       ),
+    );
+  }
+
+  Widget _buildLoadingView(BuildContext context, OcrProvider provider) {
+    return Column(
+      children: [
+        // 显示正在识别的图片预览
+        Expanded(
+          flex: 2,
+          child: Container(
+            color: Colors.black,
+            child: provider.currentImagePath != null
+                ? Image.file(
+                    File(provider.currentImagePath!),
+                    fit: BoxFit.contain,
+                  )
+                : const Center(
+                    child: Icon(Icons.image, color: Colors.white54, size: 64),
+                  ),
+          ),
+        ),
+        // 识别进度指示器
+        Expanded(
+          flex: 1,
+          child: Container(
+            width: double.infinity,
+            color: Theme.of(context).colorScheme.surface,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '正在识别中...',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '请稍候',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -153,10 +198,29 @@ class _CameraPage extends StatelessWidget {
             ),
             if (provider.errorMessage != null) ...[
               const SizedBox(height: 24),
-              Text(
-                provider.errorMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-                textAlign: TextAlign.center,
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        provider.errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ],

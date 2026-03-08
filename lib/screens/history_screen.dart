@@ -71,8 +71,12 @@ class HistoryScreen extends StatelessWidget {
 
     if (confirmed && context.mounted) {
       final provider = context.read<OcrProvider>();
+      final count = provider.history.length;
       for (final record in provider.history) {
         await provider.deleteRecord(record.id!);
+      }
+      if (context.mounted) {
+        Helpers.showSnackBar(context, '已清空 $count 条记录');
       }
     }
   }
@@ -90,6 +94,9 @@ class HistoryScreen extends StatelessWidget {
 
     if (confirmed) {
       await provider.deleteRecord(record.id!);
+      if (context.mounted) {
+        Helpers.showSnackBar(context, '记录已删除');
+      }
     }
   }
 
@@ -134,7 +141,17 @@ class _RecordListTile extends StatelessWidget {
         padding: const EdgeInsets.only(right: 20),
         child: const Icon(Icons.delete, color: Colors.white),
       ),
-      onDismissed: (_) => onDelete(),
+      confirmDismiss: (direction) async {
+        return await Helpers.showConfirmDialog(
+          context,
+          title: '删除记录',
+          content: '确定要删除这条记录吗？',
+        );
+      },
+      onDismissed: (_) {
+        onDelete();
+        Helpers.showSnackBar(context, '记录已删除');
+      },
       child: ListTile(
         onTap: onTap,
         leading: ClipRRect(
@@ -165,7 +182,9 @@ class _RecordListTile extends StatelessWidget {
         ),
         trailing: IconButton(
           icon: const Icon(Icons.copy),
-          onPressed: () => Helpers.copyToClipboard(context, record.displayText),
+          onPressed: () {
+            Helpers.copyToClipboard(context, record.displayText);
+          },
         ),
       ),
     );
