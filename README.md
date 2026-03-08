@@ -111,8 +111,7 @@ APK文件将生成在 `build/app/outputs/apk/release/app-release.apk`
   - `ppocr_keys_v1.txt` - 字符字典
 
 ### 支持的CPU架构
-- arm64-v8a (推荐)
-- armeabi-v7a
+- arm64-v8a
 
 ### 内存管理优化
 
