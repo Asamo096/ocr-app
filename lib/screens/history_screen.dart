@@ -50,7 +50,7 @@ class HistoryScreen extends StatelessWidget {
                 final record = provider.history[index];
                 return _RecordListTile(
                   record: record,
-                  onDelete: () => _deleteRecord(context, provider, record),
+                  onDelete: () => _deleteRecordWithoutConfirm(context, provider, record),
                   onTap: () => _showRecordDetail(context, record),
                 );
               },
@@ -81,22 +81,15 @@ class HistoryScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _deleteRecord(
+  /// 直接删除记录（不显示确认对话框，因为 Dismissible 已经处理了）
+  Future<void> _deleteRecordWithoutConfirm(
     BuildContext context,
     OcrProvider provider,
     OcrRecord record,
   ) async {
-    final confirmed = await Helpers.showConfirmDialog(
-      context,
-      title: '删除记录',
-      content: '确定要删除这条记录吗？',
-    );
-
-    if (confirmed) {
-      await provider.deleteRecord(record.id!);
-      if (context.mounted) {
-        Helpers.showSnackBar(context, '记录已删除');
-      }
+    await provider.deleteRecord(record.id!);
+    if (context.mounted) {
+      Helpers.showSnackBar(context, '记录已删除');
     }
   }
 
@@ -142,6 +135,7 @@ class _RecordListTile extends StatelessWidget {
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       confirmDismiss: (direction) async {
+        // 只在滑动删除时显示确认对话框
         return await Helpers.showConfirmDialog(
           context,
           title: '删除记录',
@@ -149,8 +143,8 @@ class _RecordListTile extends StatelessWidget {
         );
       },
       onDismissed: (_) {
+        // 确认后执行删除，不再显示对话框
         onDelete();
-        Helpers.showSnackBar(context, '记录已删除');
       },
       child: ListTile(
         onTap: onTap,
