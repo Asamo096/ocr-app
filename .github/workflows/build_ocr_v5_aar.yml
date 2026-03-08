@@ -13,8 +13,8 @@ on:
 
 env:
   REFERENCE_AAR_URL: https://raw.githubusercontent.com/Asamo096/ocr-app/main/android/app/libs/OcrLibrary-1.3.0-release.aar
-  ONNXRUNTIME_VERSION: 1.16.3
   PADDLE_VERSION: 3.0.0
+  ONNXRUNTIME_VERSION: 1.16.3
 
 jobs:
   build-onnx-models:
@@ -30,59 +30,125 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install PaddleX
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install paddlepaddle==${{ env.PADDLE_VERSION }}
-          pip install paddlex onnx onnxsim
+          # 安装 PaddlePaddle CPU 版本
+          pip install paddlepaddle==${{ env.PADDLE_VERSION }} -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+          # 安装 PaddleX
+          pip install "paddlex[base]"
+          # 安装 Paddle2ONNX 插件
+          paddlex --install paddle2onnx
+          # 安装辅助工具
+          pip install onnx onnxsim requests
 
-      - name: Download PP-OCRv5 models and convert to ONNX
+      - name: Download and convert PP-OCRv5 models
         run: |
           mkdir -p models/onnx
           
-          echo "=== Downloading PP-OCRv5 models ==="
+          python << 'EOF'
+          import os
+          import requests
+          import subprocess
           
-          # 下载检测模型
-          paddlex --get_model_info PP-OCRv5_mobile_det || true
+          # PaddleOCR 模型下载地址
+          BASE_URL = "https://paddleocr.bj.bcebos.com/PP-OCRv5/mobile"
           
-          # 下载识别模型  
-          paddlex --get_model_info PP-OCRv5_mobile_rec || true
+          models = {
+              "det": "PP-OCRv5_mobile_det_infer",
+              "rec": "PP-OCRv5_mobile_rec_infer",
+              "cls": "ch_ppocr_mobile_v2.0_cls_infer"  # v5 暂无新分类器，沿用 v2
+          }
           
-          echo "=== Converting to ONNX ==="
+          for model_type, model_name in models.items():
+              print(f"\n=== Downloading {model_name} ===")
+              
+              # 下载 Paddle 模型
+              url = f"{BASE_URL}/{model_name}.tar"
+              if model_type == "cls":
+                  # 分类器使用 v2 版本
+                  url = "https://paddleocr.bj.bcebos.com/dygraph_v2.0/ch/ch_ppocr_mobile_v2.0_cls_infer.tar"
+              
+              tar_file = f"{model_name}.tar"
+              
+              try:
+                  r = requests.get(url, timeout=60)
+                  r.raise_for_status()
+                  with open(tar_file, 'wb') as f:
+                      f.write(r.content)
+                  print(f"✓ Downloaded {len(r.content)/1024:.1f} KB")
+              except Exception as e:
+                  print(f"✗ Download failed: {e}")
+                  continue
+              
+              # 解压
+              subprocess.run(["tar", "-xf", tar_file], check=True)
+              os.remove(tar_file)
+              
+              # 重命名目录
+              if os.path.exists(model_name):
+                  paddle_dir = model_name
+              else:
+                  # 查找解压后的目录
+                  dirs = [d for d in os.listdir('.') if os.path.isdir(d) and 'infer' in d]
+                  paddle_dir = dirs[0] if dirs else model_name
+              
+              print(f"✓ Extracted to {paddle_dir}")
+              
+              # 转换为 ONNX
+              print(f"=== Converting to ONNX ===")
+              onnx_name = f"PP-OCRv5_{model_type}_infer" if model_type != "cls" else "ch_ppocr_mobile_v2.0_cls_infer"
+              
+              cmd = [
+                  "paddlex",
+                  "--paddle2onnx",
+                  "--paddle_model_dir", paddle_dir,
+                  "--onnx_model_dir", "models/onnx",
+                  "--opset_version", "11"
+              ]
+              
+              # 识别模型固定输入尺寸
+              if model_type == "rec":
+                  cmd.extend(["--input_shape_dict", "{'x': [1, 3, 48, 320]}"])
+              elif model_type == "cls":
+                  cmd.extend(["--input_shape_dict", "{'x': [1, 3, 48, 192]}"])
+              
+              result = subprocess.run(cmd, capture_output=True, text=True)
+              if result.returncode == 0:
+                  print(f"✓ Converted to {onnx_name}.onnx")
+              else:
+                  print(f"✗ Conversion failed: {result.stderr}")
+              
+              # 清理
+              import shutil
+              if os.path.exists(paddle_dir):
+                  shutil.rmtree(paddle_dir)
           
-          # 转换检测模型
-          paddlex --paddle2onnx \
-            --paddle_model_dir ~/.paddlex/official_models/PP-OCRv5_mobile_det \
-            --onnx_model_dir models/onnx \
-            --onnx_model_name PP-OCRv5_det_infer \
-            --opset_version 11 \
-            --enable_onnx_checker True
+          # 下载字典文件
+          print("\n=== Downloading dictionary ===")
+          dict_urls = [
+              "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v5.txt",
+              "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v4.txt",
+              "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt"
+          ]
           
-          # 转换识别模型（固定输入尺寸）
-          paddlex --paddle2onnx \
-            --paddle_model_dir ~/.paddlex/official_models/PP-OCRv5_mobile_rec \
-            --onnx_model_dir models/onnx \
-            --onnx_model_name PP-OCRv5_rec_infer \
-            --opset_version 11 \
-            --enable_onnx_checker True \
-            --input_shape_dict "{'x': [1, 3, 48, 320]}"
+          for url in dict_urls:
+              try:
+                  r = requests.get(url, timeout=30)
+                  if r.status_code == 200:
+                      dict_name = url.split('/')[-1].replace('_v1', '_v5')  # 统一命名为 v5
+                      with open(f"models/onnx/{dict_name}", 'w') as f:
+                          f.write(r.text)
+                      print(f"✓ Downloaded {dict_name}")
+                      break
+              except:
+                  continue
           
-          # 下载方向分类器（v2版本，v5暂无独立分类器）
-          paddlex --get_model_info PP-OCRv4_mobile_cls || true
-          paddlex --paddle2onnx \
-            --paddle_model_dir ~/.paddlex/official_models/PP-OCRv4_mobile_cls \
-            --onnx_model_dir models/onnx \
-            --onnx_model_name ch_ppocr_mobile_v2.0_cls_infer \
-            --opset_version 11 \
-            --enable_onnx_checker True \
-            --input_shape_dict "{'x': [1, 3, 48, 192]}" || echo "Cls model optional"
-          
-          echo "=== Downloading dictionary ==="
-          # 下载 v5 字典
-          wget -O models/onnx/ppocr_keys_v5.txt \
-            https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v5.txt \
-            || wget -O models/onnx/ppocr_keys_v5.txt \
-            https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v4.txt
+          print("\n=== Models ready ===")
+          for f in os.listdir("models/onnx"):
+              size = os.path.getsize(f"models/onnx/{f}") / 1024
+              print(f"  {f}: {size:.1f} KB")
+          EOF
 
       - name: Optimize ONNX models
         run: |
@@ -110,15 +176,9 @@ jobs:
                       onnx.save(model_simp, model_path)
                       print(f"  ✓ Simplified: {os.path.getsize(model_path)/1024:.1f} KB")
                   else:
-                      print(f"  ! Simplification failed, keeping original")
+                      print(f"  ! Simplification failed")
               except Exception as e:
                   print(f"  ✗ Error: {e}")
-          
-          print("=== Optimization complete ===")
-          for f in os.listdir(models_dir):
-              if f.endswith('.onnx'):
-                  size = os.path.getsize(os.path.join(models_dir, f)) / 1024
-                  print(f"  {f}: {size:.1f} KB")
           EOF
 
       - name: Upload ONNX models
@@ -146,42 +206,45 @@ jobs:
           mkdir -p reference
           cd reference
           
-          wget -O OcrLibrary-1.3.0-release.aar ${{ env.REFERENCE_AAR_URL }}
+          wget -q -O reference.aar "${{ env.REFERENCE_AAR_URL }}"
           
           echo "=== Extracting reference AAR ==="
-          unzip -o OcrLibrary-1.3.0-release.aar -d extracted/
+          unzip -q -o reference.aar -d extracted/
           
           echo "Reference AAR structure:"
-          find extracted/ -type f | head -20
+          find extracted/ -type f | sort
 
       - name: Replace models with V5
         run: |
           echo "=== Replacing models ==="
           
-          REF_DIR="reference/extracted"
-          
-          # 创建新的 assets 目录结构
           mkdir -p new_aar/assets/models
           
-          # 复制 ONNX V5 模型
-          cp onnx-models/PP-OCRv5_det_infer.onnx new_aar/assets/models/
-          cp onnx-models/PP-OCRv5_rec_infer.onnx new_aar/assets/models/
+          # 复制新模型（重命名为标准命名）
+          cp onnx-models/PP-OCRv5_det_infer.onnx new_aar/assets/models/PP-OCRv5_det_infer.onnx
+          cp onnx-models/PP-OCRv5_rec_infer.onnx new_aar/assets/models/PP-OCRv5_rec_infer.onnx
           
           # 复制分类器（如果有）
           if [ -f "onnx-models/ch_ppocr_mobile_v2.0_cls_infer.onnx" ]; then
             cp onnx-models/ch_ppocr_mobile_v2.0_cls_infer.onnx new_aar/assets/models/
           fi
           
-          # 复制字典
-          cp onnx-models/ppocr_keys_v5.txt new_aar/assets/models/
+          # 复制字典（使用 v5 或回退到 v4）
+          if [ -f "onnx-models/ppocr_keys_v5.txt" ]; then
+            cp onnx-models/ppocr_keys_v5.txt new_aar/assets/models/
+          elif [ -f "onnx-models/ppocr_keys_v4.txt" ]; then
+            cp onnx-models/ppocr_keys_v4.txt new_aar/assets/models/ppocr_keys_v5.txt
+          else
+            cp onnx-models/ppocr_keys_v1.txt new_aar/assets/models/ppocr_keys_v5.txt 2>/dev/null || echo "Warning: No dictionary found"
+          fi
           
           # 复制参考 AAR 的其他文件
-          cp -r $REF_DIR/jni new_aar/
-          cp -r $REF_DIR/*.jar new_aar/ 2>/dev/null || true
-          cp $REF_DIR/AndroidManifest.xml new_aar/
-          cp -r $REF_DIR/res new_aar/ 2>/dev/null || true
-          cp $REF_DIR/R.txt new_aar/ 2>/dev/null || true
-          cp $REF_DIR/proguard.txt new_aar/ 2>/dev/null || true
+          cp -r reference/extracted/jni new_aar/
+          cp reference/extracted/*.jar new_aar/ 2>/dev/null || true
+          cp reference/extracted/AndroidManifest.xml new_aar/
+          cp -r reference/extracted/res new_aar/ 2>/dev/null || true
+          cp reference/extracted/R.txt new_aar/ 2>/dev/null || true
+          cp reference/extracted/proguard.txt new_aar/ 2>/dev/null || true
           
           echo "=== New AAR structure ==="
           find new_aar/ -type f | sort
@@ -194,7 +257,7 @@ jobs:
           echo "=== Repackaging AAR: $AAR_NAME ==="
           
           cd new_aar
-          zip -r ../$AAR_NAME .
+          zip -r "../$AAR_NAME" . -x "*.DS_Store" -x "__MACOSX/*"
           
           cd ..
           
@@ -236,14 +299,14 @@ jobs:
             ### 更新内容
             - ✅ 升级至 PP-OCRv5 模型（检测 + 识别）
             - ✅ 支持 100+ 语言识别
-            - ✅ 模型体积优化（INT8 量化）
+            - ✅ 模型体积优化
             
             ### 模型信息
             | 模型 | 版本 | 大小 | 输入尺寸 |
             |------|------|------|----------|
             | 检测 | PP-OCRv5_mobile_det | ~2.3MB | 640×640 |
             | 识别 | PP-OCRv5_mobile_rec | ~7-8MB | 48×320 |
-            | 字典 | ppocr_keys_v5 | ~50KB | - |
+            | 分类 | ch_ppocr_mobile_v2.0_cls | ~1.2MB | 48×192 |
             
             ### 依赖
             - 原生库来自参考 AAR (v1.3.0)
@@ -274,11 +337,10 @@ jobs:
           AAR_FILE=$(ls OcrLibrary-v5-*.aar | head -1)
           
           echo "=== Extracting $AAR_FILE ==="
-          unzip -o $AAR_FILE -d extracted/
+          unzip -q -o $AAR_FILE -d extracted/
           
           echo "=== Verifying required files ==="
           
-          # 检查清单
           check() {
             if [ -f "$1" ]; then
               size=$(stat -c%s "$1" 2>/dev/null || stat -f%z "$1")
