@@ -3,7 +3,6 @@ name: Build OcrLibrary V5 AAR
 on:
   push:
     branches: [ main, develop ]
-    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
@@ -41,19 +40,16 @@ jobs:
         run: |
           mkdir -p models/paddle models/onnx
           
-          # 下载检测模型
           echo "=== Downloading PP-OCRv5_mobile_det ==="
           wget -q --show-progress \
             https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_infer.tar \
             -O models/paddle/det.tar
           
-          # 下载识别模型
           echo "=== Downloading PP-OCRv5_mobile_rec ==="
           wget -q --show-progress \
             https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_rec_infer.tar \
             -O models/paddle/rec.tar
           
-          # 解压
           cd models/paddle
           tar -xf det.tar && rm det.tar
           tar -xf rec.tar && rm rec.tar
@@ -61,37 +57,29 @@ jobs:
 
       - name: Convert to ONNX
         run: |
-          # 检测模型转换
           echo "=== Converting detection model ==="
           paddlex --paddle2onnx \
             --paddle_model_dir models/paddle/PP-OCRv5_mobile_det_infer \
             --onnx_model_dir models/onnx
-          
           mv models/onnx/inference.onnx models/onnx/PP-OCRv5_det_infer.onnx
           echo "✓ Detection model converted"
           
-          # 识别模型转换
           echo "=== Converting recognition model ==="
           paddlex --paddle2onnx \
             --paddle_model_dir models/paddle/PP-OCRv5_mobile_rec_infer \
             --onnx_model_dir models/onnx
-          
           mv models/onnx/inference.onnx models/onnx/PP-OCRv5_rec_infer.onnx
           echo "✓ Recognition model converted"
 
       - name: Download dictionary
         run: |
           mkdir -p models/onnx
-          
-          # 使用 curl 下载字典，支持重定向和超时
           echo "=== Downloading dictionary ==="
           
-          # 尝试 GitHub
           if curl -sL --max-time 30 \
             https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v4.txt \
             -o models/onnx/ppocr_keys_v5.txt 2>/dev/null; then
             echo "✓ Downloaded from GitHub"
-          # 尝试 Gitee 镜像
           elif curl -sL --max-time 30 \
             https://gitee.com/paddlepaddle/PaddleOCR/raw/release/2.7/ppocr/utils/ppocr_keys_v4.txt \
             -o models/onnx/ppocr_keys_v5.txt 2>/dev/null; then
@@ -100,48 +88,31 @@ jobs:
             echo "⚠ Download failed, will use reference AAR dictionary"
             touch models/onnx/ppocr_keys_v5.txt
           fi
-          
-          # 显示字典信息
-          if [ -s models/onnx/ppocr_keys_v5.txt ]; then
-            echo "Dictionary size: $(wc -l < models/onnx/ppocr_keys_v5.txt) lines"
-          fi
 
       - name: Optimize ONNX models
         run: |
           pip install onnxruntime
-          
           python << 'EOF'
           import onnx
           from onnxsim import simplify
           import os
           
           models_dir = "models/onnx"
-          
           for model_file in os.listdir(models_dir):
               if not model_file.endswith('.onnx'):
                   continue
-              
               model_path = os.path.join(models_dir, model_file)
               print(f"Optimizing {model_file}...")
-              
               try:
                   model = onnx.load(model_path)
                   model_simp, check = simplify(model)
-                  
                   if check:
                       onnx.save(model_simp, model_path)
                       size = os.path.getsize(model_path) / 1024
                       print(f"  ✓ Simplified: {size:.1f} KB")
-                  else:
-                      print(f"  ! Simplification check failed")
               except Exception as e:
                   print(f"  ✗ Error: {e}")
           EOF
-
-      - name: List models
-        run: |
-          echo "=== Generated ONNX models ==="
-          ls -lh models/onnx/
 
       - name: Upload ONNX models
         uses: actions/upload-artifact@v4
@@ -156,6 +127,9 @@ jobs:
     name: Assemble AAR from Reference
     needs: build-onnx-models
     runs-on: ubuntu-22.04
+    outputs:
+      aar_name: ${{ steps.package.outputs.aar_name }}
+      aar_path: ${{ steps.package.outputs.aar_path }}
     
     steps:
       - name: Download ONNX models
@@ -166,78 +140,52 @@ jobs:
 
       - name: Download and extract reference AAR
         run: |
-          echo "=== Downloading reference AAR ==="
           mkdir -p reference
           cd reference
-          
           wget -q -O reference.aar "${{ env.REFERENCE_AAR_URL }}"
           unzip -q -o reference.aar -d extracted/
-          
-          echo "Reference AAR structure:"
-          find extracted/ -type f | sort
+          cd ..
 
       - name: Replace models with V5
         run: |
-          echo "=== Replacing models ==="
-          
           mkdir -p new_aar/assets/models
           
-          # 复制新模型
           cp onnx-models/PP-OCRv5_det_infer.onnx new_aar/assets/models/
           cp onnx-models/PP-OCRv5_rec_infer.onnx new_aar/assets/models/
           
-          # 处理字典：优先使用下载的，否则从参考 AAR 复制
           if [ -s "onnx-models/ppocr_keys_v5.txt" ]; then
             cp onnx-models/ppocr_keys_v5.txt new_aar/assets/models/
             echo "✓ Using downloaded dictionary"
           else
-            # 从参考 AAR 查找字典
             DICT_FILE=$(find reference/extracted/ -name "*.txt" -type f | head -1)
             if [ -n "$DICT_FILE" ]; then
               cp "$DICT_FILE" new_aar/assets/models/ppocr_keys_v5.txt
-              echo "✓ Using dictionary from reference AAR: $DICT_FILE"
-            else
-              echo "⚠ Warning: No dictionary found"
+              echo "✓ Using dictionary from reference AAR"
             fi
           fi
           
-          # 复制参考 AAR 的其他文件
           cp -r reference/extracted/jni new_aar/
           cp reference/extracted/*.jar new_aar/ 2>/dev/null || true
           cp reference/extracted/AndroidManifest.xml new_aar/
           cp -r reference/extracted/res new_aar/ 2>/dev/null || true
           cp reference/extracted/R.txt new_aar/ 2>/dev/null || true
-          cp reference/extracted/proguard.txt new_aar/ 2>/dev/null || true
-          
-          echo "=== New AAR structure ==="
-          find new_aar/ -type f | sort
 
-      - name: Repackage AAR
+      - name: Package AAR
+        id: package
         run: |
           VERSION="${{ github.event.inputs.version || '1.0.0' }}"
-          AAR_NAME="OcrLibrary-v5-${VERSION}-release.aar"
-          
-          echo "=== Repackaging AAR: $AAR_NAME ==="
+          AAR_NAME="OcrLibrary-v5-${VERSION}-release"
           
           cd new_aar
-          zip -r "../$AAR_NAME" . -x "*.DS_Store"
-          
+          zip -r "../${AAR_NAME}.aar" . -x "*.DS_Store"
           cd ..
           
-          echo "=== AAR created ==="
-          ls -lh $AAR_NAME
+          sha256sum ${AAR_NAME}.aar > ${AAR_NAME}.aar.sha256
           
-          echo "=== AAR contents ==="
-          unzip -l $AAR_NAME | grep -E "(onnx|so|txt|jar|AndroidManifest)"
-
-      - name: Create checksum
-        run: |
-          VERSION="${{ github.event.inputs.version || '1.0.0' }}"
-          AAR_NAME="OcrLibrary-v5-${VERSION}-release.aar"
+          echo "aar_name=${AAR_NAME}" >> $GITHUB_OUTPUT
+          echo "aar_path=${AAR_NAME}.aar" >> $GITHUB_OUTPUT
           
-          sha256sum $AAR_NAME > ${AAR_NAME}.sha256
-          echo "Checksum:"
-          cat ${AAR_NAME}.sha256
+          ls -lh ${AAR_NAME}.aar
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
@@ -248,76 +196,80 @@ jobs:
             *.sha256
           retention-days: 30
 
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            OcrLibrary-v5-*.aar
-            *.sha256
-          body: |
-            ## OcrLibrary V5 ${{ github.event.inputs.version || '1.0.0' }}
-            
-            ### 更新内容
-            - ✅ 升级至 PP-OCRv5 模型
-            - ✅ 支持 100+ 语言识别
-            
-            ### 模型信息
-            | 模型 | 版本 | 输入尺寸 |
-            |------|------|----------|
-            | 检测 | PP-OCRv5_mobile_det | 640×640 |
-            | 识别 | PP-OCRv5_mobile_rec | 动态高度48 |
-            
-            ### 使用方法
-            ```gradle
-            implementation files('libs/OcrLibrary-v5-1.0.0-release.aar')
-            ```
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  verify-aar:
-    name: Verify AAR Contents
+  create-release:
+    name: Create GitHub Release
     needs: assemble-aar
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write  # 需要写入权限创建 release
     
     steps:
-      - name: Download AAR
+      - name: Download AAR artifact
         uses: actions/download-artifact@v4
         with:
           name: ocr-library-v5-aar
-          path: ./verify/
+          path: ./release/
 
-      - name: Verify structure
+      - name: Get current time
+        id: time
         run: |
-          cd verify
-          AAR_FILE=$(ls OcrLibrary-v5-*.aar | head -1)
+          echo "time=$(date '+%Y/%m/%d/%H:%M')" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date '+%Y%m%d_%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          # 使用文件名作为 tag（如 OcrLibrary-v5-1.0.0-release）
+          tag_name: ${{ needs.assemble-aar.outputs.aar_name }}
           
-          echo "=== Extracting $AAR_FILE ==="
-          unzip -q -o $AAR_FILE -d extracted/
+          # 发布时间作为详情
+          name: "${{ needs.assemble-aar.outputs.aar_name }} - ${{ steps.time.outputs.time }}"
           
-          echo "=== Verifying required files ==="
+          body: |
+            ## OcrLibrary V5 AAR
+            
+            **发布时间**: ${{ steps.time.outputs.time }}
+            
+            ### 包含内容
+            - PP-OCRv5 文本检测模型 (ONNX)
+            - PP-OCRv5 文本识别模型 (ONNX)
+            - 字符字典文件
+            - ONNX Runtime 原生库
+            
+            ### 使用方法
+            ```gradle
+            // 下载 AAR 后放入 libs/ 目录
+            implementation files('libs/${{ needs.assemble-aar.outputs.aar_name }}.aar')
+            ```
+            
+            ```java
+            OcrEngine engine = new OcrEngine(context);
+            List<OcrResult> results = engine.recognize(bitmap);
+            ```
+            
+            ### 校验信息
+            SHA256 校验文件随 AAR 一同发布
+            
+          files: |
+            release/*.aar
+            release/*.sha256
           
-          check() {
-            if [ -f "$1" ]; then
-              size=$(stat -c%s "$1" 2>/dev/null || stat -f%z "$1")
-              echo "✓ $1 ($((size/1024))KB)"
-            else
-              echo "✗ MISSING: $1"
-              exit 1
-            fi
-          }
+          # 如果是手动触发，标记为正式版；否则为预发布
+          prerelease: ${{ github.event_name != 'workflow_dispatch' }}
           
-          echo "[Native Libraries]"
-          check "extracted/jni/arm64-v8a/libRapidOcr.so"
-          check "extracted/jni/arm64-v8a/libonnxruntime.so"
+          # 如果 tag 已存在，更新 release
+          allow_updates: true
           
-          echo "[PP-OCRv5 Models]"
-          check "extracted/assets/models/PP-OCRv5_det_infer.onnx"
-          check "extracted/assets/models/PP-OCRv5_rec_infer.onnx"
-          check "extracted/assets/models/ppocr_keys_v5.txt"
-          
-          echo "[Java Classes]"
-          check "extracted/classes.jar"
-          
-          echo ""
-          echo "=== All checks passed! ==="
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-release:
+    name: Verify Release
+    needs: create-release
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Check release
+        run: |
+          echo "Release created: ${{ needs.assemble-aar.outputs.aar_name }}"
+          echo "Download URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.assemble-aar.outputs.aar_name }}"
