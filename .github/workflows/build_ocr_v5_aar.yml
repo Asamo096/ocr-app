@@ -41,73 +41,47 @@ jobs:
         run: |
           mkdir -p models/paddle models/onnx
           
-          # 设置模型下载源为 BOS（国内源更稳定）
-          export PADDLE_PDX_MODEL_SOURCE=BOS
-          
           # 下载检测模型
           echo "=== Downloading PP-OCRv5_mobile_det ==="
           wget -q --show-progress \
             https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_infer.tar \
-            -O models/paddle/PP-OCRv5_mobile_det_infer.tar
+            -O models/paddle/det.tar
           
           # 下载识别模型
           echo "=== Downloading PP-OCRv5_mobile_rec ==="
           wget -q --show-progress \
             https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_rec_infer.tar \
-            -O models/paddle/PP-OCRv5_mobile_rec_infer.tar
+            -O models/paddle/rec.tar
           
           # 解压
           cd models/paddle
-          tar -xf PP-OCRv5_mobile_det_infer.tar
-          tar -xf PP-OCRv5_mobile_rec_infer.tar
+          tar -xf det.tar && rm det.tar
+          tar -xf rec.tar && rm rec.tar
           cd ../..
 
       - name: Convert to ONNX
         run: |
-          # 转换检测模型
+          # 检测模型转换
           echo "=== Converting detection model ==="
           paddlex --paddle2onnx \
             --paddle_model_dir models/paddle/PP-OCRv5_mobile_det_infer \
             --onnx_model_dir models/onnx
           
-          # 重命名检测模型
           mv models/onnx/inference.onnx models/onnx/PP-OCRv5_det_infer.onnx
+          echo "✓ Detection model converted"
           
-          # 转换识别模型（使用 Python 脚本处理动态维度）
+          # 识别模型转换
           echo "=== Converting recognition model ==="
-          python << 'PYEOF'
-          import subprocess
-          import os
+          paddlex --paddle2onnx \
+            --paddle_model_dir models/paddle/PP-OCRv5_mobile_rec_infer \
+            --onnx_model_dir models/onnx
           
-          # 使用 paddle2onnx 命令行工具直接转换（不通过 paddlex）
-          cmd = [
-              "paddle2onnx",
-              "--model_dir", "models/paddle/PP-OCRv5_mobile_rec_infer",
-              "--model_filename", "inference.pdmodel",
-              "--params_filename", "inference.pdiparams",
-              "--save_file", "models/onnx/PP-OCRv5_rec_infer.onnx",
-              "--opset_version", "11",
-              "--enable_onnx_checker", "True"
-          ]
-          
-          result = subprocess.run(cmd, capture_output=True, text=True)
-          print(result.stdout)
-          if result.returncode != 0:
-              print("Error:", result.stderr)
-              # 尝试备用方案：使用 paddlex 但不加 input_shape_dict
-              print("Trying backup method...")
-              backup_cmd = [
-                  "paddlex", "--paddle2onnx",
-                  "--paddle_model_dir", "models/paddle/PP-OCRv5_mobile_rec_infer",
-                  "--onnx_model_dir", "models/onnx"
-              ]
-              subprocess.run(backup_cmd, check=True)
-              os.rename("models/onnx/inference.onnx", "models/onnx/PP-OCRv5_rec_infer.onnx")
-          PYEOF
+          mv models/onnx/inference.onnx models/onnx/PP-OCRv5_rec_infer.onnx
+          echo "✓ Recognition model converted"
 
       - name: Download dictionary
         run: |
-          # 尝试下载 v5 字典，如果不存在则使用 v4
+          # 下载 v5 字典（如果不存在则使用 v4）
           wget -q \
             https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v5.txt \
             -O models/onnx/ppocr_keys_v5.txt \
