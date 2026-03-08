@@ -35,7 +35,7 @@ jobs:
           pip install paddlepaddle==${{ env.PADDLE_VERSION }} -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
           pip install "paddlex[base]"
           paddlex --install paddle2onnx
-          pip install onnx onnxsim requests
+          pip install onnx onnxsim
 
       - name: Download PP-OCRv5 models
         run: |
@@ -81,13 +81,30 @@ jobs:
 
       - name: Download dictionary
         run: |
-          # 下载 v5 字典（如果不存在则使用 v4）
-          wget -q \
-            https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v5.txt \
-            -O models/onnx/ppocr_keys_v5.txt \
-          || wget -q \
+          mkdir -p models/onnx
+          
+          # 使用 curl 下载字典，支持重定向和超时
+          echo "=== Downloading dictionary ==="
+          
+          # 尝试 GitHub
+          if curl -sL --max-time 30 \
             https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v4.txt \
-            -O models/onnx/ppocr_keys_v5.txt
+            -o models/onnx/ppocr_keys_v5.txt 2>/dev/null; then
+            echo "✓ Downloaded from GitHub"
+          # 尝试 Gitee 镜像
+          elif curl -sL --max-time 30 \
+            https://gitee.com/paddlepaddle/PaddleOCR/raw/release/2.7/ppocr/utils/ppocr_keys_v4.txt \
+            -o models/onnx/ppocr_keys_v5.txt 2>/dev/null; then
+            echo "✓ Downloaded from Gitee"
+          else
+            echo "⚠ Download failed, will use reference AAR dictionary"
+            touch models/onnx/ppocr_keys_v5.txt
+          fi
+          
+          # 显示字典信息
+          if [ -s models/onnx/ppocr_keys_v5.txt ]; then
+            echo "Dictionary size: $(wc -l < models/onnx/ppocr_keys_v5.txt) lines"
+          fi
 
       - name: Optimize ONNX models
         run: |
@@ -130,7 +147,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ppocrv5-onnx-models
-          path: models/onnx/*.onnx
+          path: |
+            models/onnx/*.onnx
+            models/onnx/*.txt
           retention-days: 7
 
   assemble-aar:
@@ -167,9 +186,19 @@ jobs:
           cp onnx-models/PP-OCRv5_det_infer.onnx new_aar/assets/models/
           cp onnx-models/PP-OCRv5_rec_infer.onnx new_aar/assets/models/
           
-          # 复制字典
-          if [ -f "onnx-models/ppocr_keys_v5.txt" ]; then
+          # 处理字典：优先使用下载的，否则从参考 AAR 复制
+          if [ -s "onnx-models/ppocr_keys_v5.txt" ]; then
             cp onnx-models/ppocr_keys_v5.txt new_aar/assets/models/
+            echo "✓ Using downloaded dictionary"
+          else
+            # 从参考 AAR 查找字典
+            DICT_FILE=$(find reference/extracted/ -name "*.txt" -type f | head -1)
+            if [ -n "$DICT_FILE" ]; then
+              cp "$DICT_FILE" new_aar/assets/models/ppocr_keys_v5.txt
+              echo "✓ Using dictionary from reference AAR: $DICT_FILE"
+            else
+              echo "⚠ Warning: No dictionary found"
+            fi
           fi
           
           # 复制参考 AAR 的其他文件
@@ -198,7 +227,6 @@ jobs:
           echo "=== AAR created ==="
           ls -lh $AAR_NAME
           
-          # 验证内容
           echo "=== AAR contents ==="
           unzip -l $AAR_NAME | grep -E "(onnx|so|txt|jar|AndroidManifest)"
 
@@ -208,6 +236,8 @@ jobs:
           AAR_NAME="OcrLibrary-v5-${VERSION}-release.aar"
           
           sha256sum $AAR_NAME > ${AAR_NAME}.sha256
+          echo "Checksum:"
+          cat ${AAR_NAME}.sha256
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
