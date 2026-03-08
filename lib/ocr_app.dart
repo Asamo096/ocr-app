@@ -1,0 +1,25 @@
+import 'models/ocr_record.dart';
+import 'models/ocr_result.dart';
+import 'services/database_service.dart';
+import 'services/ocr_service.dart';
+import 'services/image_service.dart';
+import 'providers/ocr_provider.dart';
+import 'screens/home_screen.dart';
+import 'screens/camera_screen.dart';
+import 'screens/result_screen.dart';
+import 'screens/history_screen.dart';
+import 'utils/constants.dart';
+import 'utils/helpers.dart';
+
+export 'models/ocr_record.dart';
+export 'models/ocr_result.dart';
+export 'services/database_service.dart';
+export 'services/ocr_service.dart';
+export 'services/image_service.dart';
+export 'providers/ocr_provider.dart';
+export 'screens/home_screen.dart';
+export 'screens/camera_screen.dart';
+export 'screens/result_screen.dart';
+export 'screens/history_screen.dart';
+export 'utils/constants.dart';
+export 'utils/helpers.dart';

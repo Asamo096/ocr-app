@@ -1,0 +1,20 @@
+# 构建输出
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# 其他
+.DS_Store
+*.log
+*.swp
+*.lock

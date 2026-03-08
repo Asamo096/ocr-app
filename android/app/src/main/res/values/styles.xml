@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动主题 - 应用启动时显示 -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <!-- 窗口背景设置为启动页 -->
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <!-- 全屏显示，无状态栏 -->
+        <item name="android:windowFullscreen">false</item>
+        <!-- 无标题栏 -->
+        <item name="android:windowNoTitle">true</item>
+        <!-- 透明状态栏 -->
+        <item name="android:windowTranslucentStatus">false</item>
+        <item name="android:windowTranslucentNavigation">false</item>
+        <!-- 状态栏颜色 -->
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
+    </style>
+    
+    <!-- 正常主题 - 应用运行时显示 -->
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+    </style>
+</resources>
