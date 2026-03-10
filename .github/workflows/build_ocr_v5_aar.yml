@@ -180,11 +180,17 @@ jobs:
           name: onnxruntime-lib
           path: ./onnxruntime-lib/
 
+      - name: Verify ONNX Runtime files
+        run: |
+          echo "=== ONNX Runtime files ==="
+          find ./onnxruntime-lib/ -type f
+          ls -lh ./onnxruntime-lib/arm64-v8a/ 2>/dev/null || echo "arm64-v8a not found"
+
       - name: Create OCR native library source
         run: |
           mkdir -p ocr-native/src ocr-native/include
           
-          # CMakeLists.txt
+          # CMakeLists.txt - 使用绝对路径
           cat > ocr-native/CMakeLists.txt << 'EOF'
           cmake_minimum_required(VERSION 3.22.1)
           project(ocr VERSION 1.0.0 LANGUAGES CXX)
@@ -195,9 +201,16 @@ jobs:
           set(CMAKE_ANDROID_API 24)
           set(CMAKE_ANDROID_NDK $ENV{ANDROID_NDK_HOME})
           
-          find_library(ONNXRUNTIME_LIB onnxruntime 
-            PATHS ${CMAKE_SOURCE_DIR}/../artifacts/onnxruntime-lib/arm64-v8a 
-            NO_DEFAULT_PATH)
+          # 使用命令行传入的绝对路径
+          if(NOT ONNXRUNTIME_LIB_PATH)
+              message(FATAL_ERROR "ONNXRUNTIME_LIB_PATH not set")
+          endif()
+          
+          if(NOT EXISTS ${ONNXRUNTIME_LIB_PATH})
+              message(FATAL_ERROR "ONNX Runtime library not found at: ${ONNXRUNTIME_LIB_PATH}")
+          endif()
+          
+          message(STATUS "Using ONNX Runtime: ${ONNXRUNTIME_LIB_PATH}")
           
           add_library(ocr SHARED
             src/jni_bridge.cpp
@@ -208,12 +221,12 @@ jobs:
           
           target_include_directories(ocr PRIVATE
             ${CMAKE_SOURCE_DIR}/include
-            ${CMAKE_SOURCE_DIR}/../artifacts/onnxruntime-lib/include
+            ${ONNXRUNTIME_INCLUDE_DIR}
             $ENV{ANDROID_NDK_HOME}/sysroot/usr/include
           )
           
           target_link_libraries(ocr
-            ${ONNXRUNTIME_LIB}
+            ${ONNXRUNTIME_LIB_PATH}
             android
             log
             jnigraphics
@@ -277,13 +290,11 @@ jobs:
               std::unique_ptr<Ort::Session> recSession_;
               std::vector<std::string> dict_;
               
-              // 检测
               std::vector<float> preprocessDet(const uint8_t* pixels, int width, int height);
               std::vector<TextBox> runDetection(const std::vector<float>& input);
               std::vector<TextBox> postprocessDet(const std::vector<float>& output, 
                                                  int origWidth, int origHeight);
               
-              // 识别
               std::vector<float> preprocessRec(const uint8_t* pixels, 
                                               const TextBox& box,
                                               int origWidth, 
@@ -291,7 +302,6 @@ jobs:
               std::string runRecognition(const std::vector<float>& input);
               std::string decodeCTC(const std::vector<float>& output, int timeSteps);
               
-              // 工具
               void loadDictionary(const std::string& dictPath);
               std::vector<uint8_t> cropBox(const uint8_t* pixels, 
                                           int width, 
@@ -304,7 +314,6 @@ jobs:
           cat > ocr-native/src/ocr_engine.cpp << 'EOF'
           #include "ocr_engine.h"
           #include <android/log.h>
-          #include <android/bitmap.h>
           #include <cmath>
           #include <fstream>
           #include <sstream>
@@ -314,13 +323,9 @@ jobs:
           #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "OCR", __VA_ARGS__)
           #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "OCR", __VA_ARGS__)
           
-          // 检测模型输入尺寸
           constexpr int DET_INPUT_SIZE = 640;
-          // 识别模型高度
           constexpr int REC_INPUT_HEIGHT = 48;
-          // 识别模型最大宽度
           constexpr int REC_INPUT_MAX_WIDTH = 320;
-          // 检测阈值
           constexpr float DET_THRESH = 0.3f;
           constexpr float BOX_THRESH = 0.5f;
           
@@ -351,28 +356,20 @@ jobs:
                       dict_.push_back(line);
                   }
               }
-              // 添加空白字符
-              dict_.insert(dict_.begin(), "#");  // CTC blank
+              dict_.insert(dict_.begin(), "#");
           }
           
           std::vector<OcrResult> OcrEngine::recognize(const uint8_t* pixels, 
                                                       int width, 
                                                       int height, 
                                                       int format) {
-              // 1. 检测
               auto detInput = preprocessDet(pixels, width, height);
               auto boxes = runDetection(detInput);
               
-              // 2. 识别每个文本框
               std::vector<OcrResult> results;
               for (const auto& box : boxes) {
-                  // 裁剪文本区域
                   auto crop = cropBox(pixels, width, height, box);
-                  
-                  // 预处理识别输入
                   auto recInput = preprocessRec(crop.data(), box, width, height);
-                  
-                  // 运行识别
                   std::string text = runRecognition(recInput);
                   
                   OcrResult result;
@@ -389,7 +386,6 @@ jobs:
           std::vector<float> OcrEngine::preprocessDet(const uint8_t* pixels, 
                                                       int width, 
                                                       int height) {
-              // 缩放到 640x640，归一化到 [-1, 1]
               std::vector<float> input(3 * DET_INPUT_SIZE * DET_INPUT_SIZE);
               
               float scale = std::min(
@@ -400,7 +396,6 @@ jobs:
               int newWidth = static_cast<int>(width * scale);
               int newHeight = static_cast<int>(height * scale);
               
-              // 简单双线性插值（简化版）
               for (int c = 0; c < 3; c++) {
                   for (int y = 0; y < DET_INPUT_SIZE; y++) {
                       for (int x = 0; x < DET_INPUT_SIZE; x++) {
@@ -410,10 +405,9 @@ jobs:
                           srcX = std::min(srcX, width - 1);
                           srcY = std::min(srcY, height - 1);
                           
-                          int srcIdx = (srcY * width + srcX) * 4 + c;  // ARGB
+                          int srcIdx = (srcY * width + srcX) * 4 + c;
                           int dstIdx = c * DET_INPUT_SIZE * DET_INPUT_SIZE + y * DET_INPUT_SIZE + x;
                           
-                          // 归一化: (pixel - 127.5) / 127.5
                           input[dstIdx] = (pixels[srcIdx] - 127.5f) / 127.5f;
                       }
                   }
@@ -423,20 +417,17 @@ jobs:
           }
           
           std::vector<TextBox> OcrEngine::runDetection(const std::vector<float>& input) {
-              // 创建输入张量
               std::vector<int64_t> inputShape = {1, 3, DET_INPUT_SIZE, DET_INPUT_SIZE};
               Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
                   Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault),
                   const_cast<float*>(input.data()), input.size(), inputShape.data(), 4);
               
-              // 运行推理
               const char* inputNames[] = {"x"};
               const char* outputNames[] = {"sigmoid_0.tmp_0"};
               
               auto outputTensors = detSession_->Run(Ort::RunOptions{nullptr},
                   inputNames, &inputTensor, 1, outputNames, 1);
               
-              // 获取输出
               float* outputData = outputTensors[0].GetTensorMutableData<float>();
               auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
               
@@ -451,19 +442,14 @@ jobs:
           std::vector<TextBox> OcrEngine::postprocessDet(const std::vector<float>& output, 
                                                          int origWidth, 
                                                          int origHeight) {
-              // DB 算法后处理（简化版）
               std::vector<TextBox> boxes;
               
-              // 阈值分割
               std::vector<uint8_t> binary(output.size());
               for (size_t i = 0; i < output.size(); i++) {
                   binary[i] = output[i] > DET_THRESH ? 255 : 0;
               }
               
-              // 查找轮廓（简化：只返回几个固定区域作为示例）
-              // 实际实现需要完整的轮廓查找和近似
-              
-              // 示例：返回一个中心区域
+              // 简化：返回示例框
               TextBox box;
               int margin = 50;
               box.points[0] = {margin, margin};
@@ -481,7 +467,6 @@ jobs:
                                                   int width, 
                                                   int height,
                                                   const TextBox& box) {
-              // 计算包围盒
               int minX = width, minY = height, maxX = 0, maxY = 0;
               for (int i = 0; i < 4; i++) {
                   minX = std::min(minX, box.points[i].x);
@@ -498,7 +483,6 @@ jobs:
               int cropWidth = maxX - minX;
               int cropHeight = maxY - minY;
               
-              // 裁剪区域
               std::vector<uint8_t> crop(cropWidth * cropHeight * 4);
               for (int y = 0; y < cropHeight; y++) {
                   for (int x = 0; x < cropWidth; x++) {
@@ -515,10 +499,8 @@ jobs:
                                                       const TextBox& box,
                                                       int origWidth, 
                                                       int origHeight) {
-              // 裁剪并缩放到 48x320
               auto crop = cropBox(pixels, origWidth, origHeight, box);
               
-              // 计算裁剪尺寸
               int minX = origWidth, minY = origHeight, maxX = 0, maxY = 0;
               for (int i = 0; i < 4; i++) {
                   minX = std::min(minX, box.points[i].x);
@@ -529,14 +511,12 @@ jobs:
               int cropWidth = maxX - minX;
               int cropHeight = maxY - minY;
               
-              // 缩放到高度 48，保持宽高比
               float scale = static_cast<float>(REC_INPUT_HEIGHT) / cropHeight;
               int newWidth = static_cast<int>(cropWidth * scale);
               newWidth = std::min(newWidth, REC_INPUT_MAX_WIDTH);
               
               std::vector<float> input(3 * REC_INPUT_HEIGHT * REC_INPUT_MAX_WIDTH, 0.0f);
               
-              // 缩放并归一化
               for (int c = 0; c < 3; c++) {
                   for (int y = 0; y < REC_INPUT_HEIGHT; y++) {
                       for (int x = 0; x < newWidth; x++) {
@@ -557,20 +537,17 @@ jobs:
           }
           
           std::string OcrEngine::runRecognition(const std::vector<float>& input) {
-              // 创建输入张量
               std::vector<int64_t> inputShape = {1, 3, REC_INPUT_HEIGHT, REC_INPUT_MAX_WIDTH};
               Ort::Value inputTensor = Ort::Value::CreateTensor<float>(
                   Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault),
                   const_cast<float*>(input.data()), input.size(), inputShape.data(), 4);
               
-              // 运行推理
               const char* inputNames[] = {"x"};
-              const char* outputNames[] = {"softmax_5.tmp_0"};  // 根据实际模型调整
+              const char* outputNames[] = {"softmax_5.tmp_0"};
               
               auto outputTensors = recSession_->Run(Ort::RunOptions{nullptr},
                   inputNames, &inputTensor, 1, outputNames, 1);
               
-              // 获取输出
               float* outputData = outputTensors[0].GetTensorMutableData<float>();
               auto outputShape = outputTensors[0].GetTensorTypeAndShapeInfo().GetShape();
               
@@ -585,12 +562,10 @@ jobs:
           std::string OcrEngine::decodeCTC(const std::vector<float>& output, int timeSteps) {
               int numClasses = dict_.size();
               
-              // 贪心解码
               std::string result;
               int prevIdx = -1;
               
               for (int t = 0; t < timeSteps; t++) {
-                  // 找到概率最大的类别
                   int maxIdx = 0;
                   float maxProb = output[t * numClasses];
                   
@@ -602,7 +577,6 @@ jobs:
                       }
                   }
                   
-                  // 去重和去空白
                   if (maxIdx != prevIdx && maxIdx != 0) {
                       if (maxIdx < static_cast<int>(dict_.size())) {
                           result += dict_[maxIdx];
@@ -615,14 +589,14 @@ jobs:
           }
           EOF
           
-          # preprocess.cpp - 空实现（已在 ocr_engine.cpp 中）
+          # preprocess.cpp - 空实现
           cat > ocr-native/src/preprocess.cpp << 'EOF'
-          // 预处理和裁剪功能已在 ocr_engine.cpp 中实现
+          // Preprocess functions implemented in ocr_engine.cpp
           EOF
           
-          # postprocess.cpp - 空实现（已在 ocr_engine.cpp 中）
+          # postprocess.cpp - 空实现
           cat > ocr-native/src/postprocess.cpp << 'EOF'
-          // 后处理功能已在 ocr_engine.cpp 中实现
+          // Postprocess functions implemented in ocr_engine.cpp
           EOF
           
           # jni_bridge.cpp - 完整 JNI 桥接
@@ -648,15 +622,12 @@ jobs:
               const char* dict_path = env->GetStringUTFChars(dictPath, nullptr);
               
               LOGI("Initializing OCR Engine");
-              LOGI("Det model: %s", det_path);
-              LOGI("Rec model: %s", rec_path);
               
               OcrEngine* engine = nullptr;
               try {
                   engine = new OcrEngine(det_path, rec_path, dict_path);
               } catch (const std::exception& e) {
                   LOGE("Failed to create engine: %s", e.what());
-                  engine = nullptr;
               }
               
               env->ReleaseStringUTFChars(detModelPath, det_path);
@@ -696,7 +667,6 @@ jobs:
               
               LOGI("Processing bitmap: %dx%d", info.width, info.height);
               
-              // 执行 OCR
               auto results = engine->recognize(
                   static_cast<const uint8_t*>(pixels),
                   info.width,
@@ -706,55 +676,51 @@ jobs:
               
               AndroidBitmap_unlockPixels(env, bitmap);
               
-              // 创建 Java 结果对象
               jclass resultClass = env->FindClass("com/ocr/library/OcrResult");
               if (!resultClass) {
                   LOGE("Failed to find OcrResult class");
                   return nullptr;
               }
               
-          jobjectArray resultArray = env->NewObjectArray(results.size(), resultClass, nullptr);
-          if (!resultArray) {
-              LOGE("Failed to create result array");
-              return nullptr;
-          }
-          
-          jmethodID resultCtor = env->GetMethodID(resultClass, "<init>",
-              "(Ljava/lang/String;[Landroid/graphics/Point;F)V");
-          if (!resultCtor) {
-              LOGE("Failed to find OcrResult constructor");
-              return nullptr;
-          }
-          
-          jclass pointClass = env->FindClass("android/graphics/Point");
-          jmethodID pointCtor = env->GetMethodID(pointClass, "<init>", "(II)V");
-          
-          for (size_t i = 0; i < results.size(); i++) {
-              // 创建点数组
-              jobjectArray pointsArray = env->NewObjectArray(4, pointClass, nullptr);
-              for (int j = 0; j < 4; j++) {
-                  jobject point = env->NewObject(pointClass, pointCtor,
-                      results[i].points[j].x, results[i].points[j].y);
-                  env->SetObjectArrayElement(pointsArray, j, point);
-                  env->DeleteLocalRef(point);
+              jobjectArray resultArray = env->NewObjectArray(results.size(), resultClass, nullptr);
+              if (!resultArray) {
+                  LOGE("Failed to create result array");
+                  return nullptr;
               }
               
-              // 创建文本字符串
-              jstring text = env->NewStringUTF(results[i].text.c_str());
+              jmethodID resultCtor = env->GetMethodID(resultClass, "<init>",
+                  "(Ljava/lang/String;[Landroid/graphics/Point;F)V");
+              if (!resultCtor) {
+                  LOGE("Failed to find OcrResult constructor");
+                  return nullptr;
+              }
               
-              // 创建结果对象
-              jobject result = env->NewObject(resultClass, resultCtor,
-                  text, pointsArray, results[i].confidence);
+              jclass pointClass = env->FindClass("android/graphics/Point");
+              jmethodID pointCtor = env->GetMethodID(pointClass, "<init>", "(II)V");
               
-              env->SetObjectArrayElement(resultArray, i, result);
+              for (size_t i = 0; i < results.size(); i++) {
+                  jobjectArray pointsArray = env->NewObjectArray(4, pointClass, nullptr);
+                  for (int j = 0; j < 4; j++) {
+                      jobject point = env->NewObject(pointClass, pointCtor,
+                          results[i].points[j].x, results[i].points[j].y);
+                      env->SetObjectArrayElement(pointsArray, j, point);
+                      env->DeleteLocalRef(point);
+                  }
+                  
+                  jstring text = env->NewStringUTF(results[i].text.c_str());
+                  
+                  jobject result = env->NewObject(resultClass, resultCtor,
+                      text, pointsArray, results[i].confidence);
+                  
+                  env->SetObjectArrayElement(resultArray, i, result);
+                  
+                  env->DeleteLocalRef(text);
+                  env->DeleteLocalRef(pointsArray);
+                  env->DeleteLocalRef(result);
+              }
               
-              env->DeleteLocalRef(text);
-              env->DeleteLocalRef(pointsArray);
-              env->DeleteLocalRef(result);
-          }
-          
-          LOGI("Returning %zu results", results.size());
-          return resultArray;
+              LOGI("Returning %zu results", results.size());
+              return resultArray;
           }
           
           JNIEXPORT void JNICALL
@@ -774,11 +740,20 @@ jobs:
           mkdir -p ocr-native/build
           cd ocr-native/build
           
+          # 获取绝对路径
+          ONNXRUNTIME_SO=$(find ${{ github.workspace }}/onnxruntime-lib -name "libonnxruntime.so" | head -1)
+          ONNXRUNTIME_INCLUDE=$(find ${{ github.workspace }}/onnxruntime-lib -type d -name "onnxruntime" | head -1)
+          
+          echo "ONNX Runtime SO: $ONNXRUNTIME_SO"
+          echo "ONNX Runtime Include: $ONNXRUNTIME_INCLUDE"
+          
           cmake .. \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
-            -DCMAKE_BUILD_TYPE=MinSizeRel
+            -DCMAKE_BUILD_TYPE=MinSizeRel \
+            -DONNXRUNTIME_LIB_PATH="$ONNXRUNTIME_SO" \
+            -DONNXRUNTIME_INCLUDE_DIR="$ONNXRUNTIME_INCLUDE"
           
           cmake --build . --parallel $(nproc)
           
@@ -787,7 +762,7 @@ jobs:
           ls -la
           find . -name "*.so"
           
-          # 复制到已知位置
+          # 复制到上传目录
           mkdir -p ${{ github.workspace }}/ocr-native-lib/arm64-v8a
           cp libocr.so ${{ github.workspace }}/ocr-native-lib/arm64-v8a/
           echo "✓ OCR native library built"
@@ -798,7 +773,6 @@ jobs:
           name: ocr-native-lib
           path: ${{ github.workspace }}/ocr-native-lib/
           retention-days: 7
-
   build-android-aar:
     name: Build Android AAR Package
     runs-on: ubuntu-22.04
