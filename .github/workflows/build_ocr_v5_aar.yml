@@ -195,7 +195,6 @@ jobs:
         run: |
           mkdir -p ocr-native/src ocr-native/include
           
-          # CMakeLists.txt - 使用绝对路径
           cat > ocr-native/CMakeLists.txt << 'EOF'
           cmake_minimum_required(VERSION 3.22.1)
           project(ocr VERSION 1.0.0 LANGUAGES CXX)
@@ -206,7 +205,6 @@ jobs:
           set(CMAKE_ANDROID_API 24)
           set(CMAKE_ANDROID_NDK $ENV{ANDROID_NDK_HOME})
           
-          # 使用命令行传入的绝对路径
           if(NOT ONNXRUNTIME_LIB_PATH)
               message(FATAL_ERROR "ONNXRUNTIME_LIB_PATH not set")
           endif()
@@ -216,7 +214,6 @@ jobs:
           endif()
           
           message(STATUS "Using ONNX Runtime: ${ONNXRUNTIME_LIB_PATH}")
-          message(STATUS "Using ONNX Runtime Include: ${ONNXRUNTIME_INCLUDE_DIR}")
           
           add_library(ocr SHARED
             src/jni_bridge.cpp
@@ -228,8 +225,6 @@ jobs:
           target_include_directories(ocr PRIVATE
             ${CMAKE_SOURCE_DIR}/include
             ${ONNXRUNTIME_INCLUDE_DIR}
-            ${ONNXRUNTIME_INCLUDE_DIR}/../../..              # 到 include 根
-            ${ONNXRUNTIME_INCLUDE_DIR}/core/session            # 直接 session 目录
             $ENV{ANDROID_NDK_HOME}/sysroot/usr/include
           )
           
@@ -240,13 +235,12 @@ jobs:
             jnigraphics
           )
           
+          # 启用异常和 RTTI，因为 ONNX Runtime C++ API 需要
           target_compile_options(ocr PRIVATE 
             -O3 
             -fvisibility=hidden 
             -ffunction-sections 
             -fdata-sections
-            -fno-exceptions
-            -fno-rtti
           )
           
           target_link_options(ocr PRIVATE 
