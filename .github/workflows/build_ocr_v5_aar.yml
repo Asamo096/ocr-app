@@ -186,6 +186,49 @@ jobs:
           find ./onnxruntime-lib/ -type f
           ls -lh ./onnxruntime-lib/arm64-v8a/ 2>/dev/null || echo "arm64-v8a not found"
 
+  build-ocr-native:
+    name: Build OCR Native Library (arm64-v8a)
+    runs-on: ubuntu-22.04
+    needs: [build-onnxruntime]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125 cmake;3.22.1'
+
+      - name: Setup NDK
+        run: |
+          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
+
+      - name: Download ONNX Runtime artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: onnxruntime-lib
+          path: ./onnxruntime-lib/
+
+      - name: Verify ONNX Runtime files
+        run: |
+          echo "=== ONNX Runtime files ==="
+          find ./onnxruntime-lib/ -type f | head -30
+          
+          echo "=== Looking for headers ==="
+          find ./onnxruntime-lib/ -name "*.h" | head -20
+          
+          echo "=== Looking for onnxruntime_cxx_api.h ==="
+          find ./onnxruntime-lib/ -name "onnxruntime_cxx_api.h" 2>/dev/null || echo "Not found in standard location"
+
       - name: Create OCR native library source
         run: |
           mkdir -p ocr-native/src ocr-native/include
@@ -211,6 +254,7 @@ jobs:
           endif()
           
           message(STATUS "Using ONNX Runtime: ${ONNXRUNTIME_LIB_PATH}")
+          message(STATUS "Using ONNX Runtime Include: ${ONNXRUNTIME_INCLUDE_DIR}")
           
           add_library(ocr SHARED
             src/jni_bridge.cpp
@@ -222,6 +266,8 @@ jobs:
           target_include_directories(ocr PRIVATE
             ${CMAKE_SOURCE_DIR}/include
             ${ONNXRUNTIME_INCLUDE_DIR}
+            ${ONNXRUNTIME_INCLUDE_DIR}/../../..              # 到 include 根
+            ${ONNXRUNTIME_INCLUDE_DIR}/core/session            # 直接 session 目录
             $ENV{ANDROID_NDK_HOME}/sysroot/usr/include
           )
           
