@@ -183,44 +183,6 @@ jobs:
       - name: Verify ONNX Runtime files
         run: |
           echo "=== ONNX Runtime files ==="
-          find ./onnxruntime-lib/ -type f
-          ls -lh ./onnxruntime-lib/arm64-v8a/ 2>/dev/null || echo "arm64-v8a not found"
-
-  build-ocr-native:
-    name: Build OCR Native Library (arm64-v8a)
-    runs-on: ubuntu-22.04
-    needs: [build-onnxruntime]
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: '11076708'
-          packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125 cmake;3.22.1'
-
-      - name: Setup NDK
-        run: |
-          echo "ANDROID_NDK=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
-
-      - name: Download ONNX Runtime artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: onnxruntime-lib
-          path: ./onnxruntime-lib/
-
-      - name: Verify ONNX Runtime files
-        run: |
-          echo "=== ONNX Runtime files ==="
           find ./onnxruntime-lib/ -type f | head -30
           
           echo "=== Looking for headers ==="
