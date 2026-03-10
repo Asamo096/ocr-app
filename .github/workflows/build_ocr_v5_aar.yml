@@ -15,6 +15,7 @@ env:
   ONNXRUNTIME_VERSION: 1.16.3
   NDK_VERSION: 26.1.10909125
   AAR_VERSION: ${{ github.event.inputs.version || '1.0.0' }}
+  JAVA_VERSION: 17
 
 jobs:
   build-onnx-models:
@@ -69,7 +70,6 @@ jobs:
       - name: Download dictionary
         run: |
           mkdir -p models/onnx
-          echo "=== Downloading PP-OCRv4/v5 dictionary ==="
           
           if curl -sL --max-time 30 \
             https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v4.txt \
@@ -122,6 +122,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -201,6 +207,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -788,14 +800,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: '11076708'
+          packages: 'platforms;android-34 build-tools;34.0.0'
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
